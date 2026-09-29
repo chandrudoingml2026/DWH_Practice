@@ -1,0 +1,1167 @@
+BANKING DATA WAREHOUSE ETL – COMPLETE SQL EXPLANATION
+
+1. OVERALL DATA FLOW
+
+STAGING
+chandb.stg_*
+      |
+      | Clean / Transform / Add load timestamp
+      v
+ODS
+odsdb_chandb.ods_*
+      |
+      | Dimension & Fact transformations
+      v
+EDW
+edwdb_chandb.dim_*
+edwdb_chandb.fact_*
+      |
+      | Business-specific transformations
+      v
+DATA MARTS
+loans_mart_chandb
+trans_mart_chandb
+payment_mart_chandb
+cc_mart_chandb
+
+ONE-LINE SUMMARY:
+STG stores raw incoming data -> ODS stores cleaned operational data -> EDW stores dimensions/facts with business logic and history -> Data Marts store subject-specific analytical data for reporting.
+
+
+2. TABLES INVOLVED
+
+Layer | Table | Purpose
+STG | chandb.stg_accounts | Raw account data
+STG | chandb.stg_transactions | Raw transaction data
+STG | chandb.stg_payments | Raw payment data
+STG | chandb.stg_creditcard | Raw credit-card data
+STG | chandb.stg_loans | Raw loan data
+STG | chandb.stg_cust_profile | Raw customer data
+STG | chandb.stg_branches | Raw branch data
+STG | chandb.stg_employees | Raw employee data
+
+ODS | odsdb_chandb.ods_accounts | Cleaned accounts
+ODS | odsdb_chandb.ods_transactions | Cleaned transactions
+ODS | odsdb_chandb.ods_payments | Cleaned payments
+ODS | odsdb_chandb.ods_creditcard | Cleaned credit cards
+ODS | odsdb_chandb.ods_loans | Cleaned loans
+ODS | odsdb_chandb.ods_cust_profile | Cleaned customers
+ODS | odsdb_chandb.ods_branches | Cleaned branches
+ODS | odsdb_chandb.ods_employees | Cleaned employees
+
+EDW | edwdb_chandb.dim_customers | Customer dimension - SCD Type 1
+EDW | edwdb_chandb.dim_branches | Branch dimension - SCD Type 2
+EDW | edwdb_chandb.dim_employees | Employee dimension
+EDW | edwdb_chandb.dim_loans | Loan dimension
+EDW | edwdb_chandb.fact_loans | Loan fact
+EDW | edwdb_chandb.fact_loan_summary | Aggregated loan fact
+
+MART | loans_mart_chandb.fact_high_value_loans | High-value loan analysis
+MART | trans_mart_chandb.fact_transactions | Transaction analytics
+MART | trans_mart_chandb.agg_branch_trans_summary | Branch transaction summary
+MART | payment_mart_chandb.fact_payments | Payment analytics
+MART | cc_mart_chandb.fact_creditcard | Credit-card analytics
+
+
+3. STG -> ODS
+
+ODS means Operational Data Store.
+
+The first major step is:
+STG -> ODS
+
+The ODS layer generally keeps incoming data while performing basic cleaning and standardization.
+
+
+4. ACCOUNTS ODS LOAD
+
+SQL:
+INSERT INTO odsdb_chandb.ods_accounts
+SELECT AccountID,
+       trim(AccountType),
+       Balance,
+       CreditScore,
+       upper(Currency),
+       CustomerID,
+       DateOpened,
+       ManagerID,
+       ODLimit,
+       CURRENT_DATE AS load_dt,
+       CURRENT_TIMESTAMP AS load_ts
+FROM chandb.stg_accounts
+WHERE AccountID IS NOT NULL;
+
+SOURCE:
+chandb.stg_accounts
+
+TARGET:
+odsdb_chandb.ods_accounts
+
+TRANSFORMATIONS:
+AccountID -> Direct
+AccountType -> TRIM()
+Balance -> Direct
+CreditScore -> Direct
+Currency -> UPPER()
+CustomerID -> Direct
+DateOpened -> Direct
+ManagerID -> Direct
+ODLimit -> Direct
+load_dt -> Current date
+load_ts -> Current timestamp
+
+TRIM(AccountType) removes unwanted spaces.
+
+Example:
+' SAVINGS ' -> 'SAVINGS'
+
+UPPER(Currency) converts:
+usd -> USD
+inr -> INR
+eur -> EUR
+
+AccountID IS NOT NULL prevents records without the key from entering ODS.
+
+ONE-LINE SUMMARY:
+Accounts are copied from STG to ODS with trimming, currency standardization and audit timestamps.
+
+
+5. TRANSACTIONS ODS LOAD
+
+SQL:
+INSERT INTO odsdb_chandb.ods_transactions
+SELECT t.*,
+       CURRENT_DATE AS load_dt,
+       CURRENT_TIMESTAMP AS load_ts
+FROM chandb.stg_transactions t;
+
+FLOW:
+stg_transactions -> ods_transactions
+
+t.* means all transaction columns are copied.
+
+Two additional columns:
+load_dt
+load_ts
+
+These are useful for:
+- Auditing
+- Identifying when data was loaded
+- Troubleshooting ETL
+- Incremental processing
+
+ONE-LINE SUMMARY:
+All transaction records are copied from STG to ODS with ETL load date and timestamp.
+
+
+6. PAYMENTS ODS LOAD
+
+SQL:
+INSERT INTO odsdb_chandb.ods_payments
+SELECT p.*,
+       CURRENT_DATE AS load_dt,
+       CURRENT_TIMESTAMP AS load_ts
+FROM chandb.stg_payments p;
+
+FLOW:
+stg_payments -> ods_payments
+
+All source columns are copied and audit columns are added.
+
+
+7. CREDIT CARD ODS LOAD
+
+SQL:
+INSERT INTO odsdb_chandb.ods_creditcard
+SELECT c.*,
+       CURRENT_DATE AS load_dt,
+       CURRENT_TIMESTAMP AS load_ts
+FROM chandb.stg_creditcard c;
+
+FLOW:
+stg_creditcard -> ods_creditcard
+
+Source data + load_dt + load_ts.
+
+
+8. LOANS ODS LOAD
+
+SQL:
+INSERT INTO odsdb_chandb.ods_loans
+SELECT l.*,
+       CURRENT_DATE AS load_dt,
+       CURRENT_TIMESTAMP AS load_ts
+FROM chandb.stg_loans l;
+
+FLOW:
+stg_loans -> ods_loans
+
+
+9. CUSTOMER ODS LOAD
+
+SQL:
+INSERT INTO odsdb_chandb.ods_cust_profile
+SELECT Address,
+       BranchID,
+       CustomerID,
+       DateOfBirth,
+       Email,
+       trim(FirstName),
+       trim(LastName),
+       substr(PhoneNumber,1,20),
+       CURRENT_DATE AS load_dt,
+       CURRENT_TIMESTAMP AS load_ts
+FROM chandb.stg_cust_profile cp;
+
+TRANSFORMATIONS:
+Address -> Direct
+BranchID -> Direct
+CustomerID -> Direct
+DateOfBirth -> Direct
+Email -> Direct
+FirstName -> TRIM()
+LastName -> TRIM()
+PhoneNumber -> First 20 characters
+load_dt -> Current date
+load_ts -> Current timestamp
+
+SUBSTR(PhoneNumber,1,20) means take maximum first 20 characters.
+
+ONE-LINE SUMMARY:
+Customer data is standardized by trimming names and limiting phone number length before loading into ODS.
+
+
+10. BRANCH AND EMPLOYEE ODS
+
+stg_branches -> ods_branches
+stg_employees -> ods_employees
+
+Both receive:
+load_dt
+load_ts
+
+
+11. SCD TYPE 1 - CUSTOMERS
+
+SCD Type 1 means history is NOT maintained.
+
+SQL:
+TRUNCATE TABLE edwdb_chandb.dim_customers;
+
+Then:
+INSERT INTO edwdb_chandb.dim_customers (
+    CustomerID,
+    FirstName,
+    LastName,
+    Email,
+    PhoneNumber,
+    Address,
+    DateOfBirth,
+    BranchID,
+    effective_date
+)
+SELECT DISTINCT
+    CustomerID,
+    FirstName,
+    LastName,
+    Email,
+    PhoneNumber,
+    Address,
+    DateOfBirth,
+    BranchID,
+    CURRENT_DATE
+FROM odsdb_chandb.ods_cust_profile;
+
+The TRUNCATE removes all existing customer records.
+
+The INSERT reloads the latest customer data.
+
+Example:
+Before:
+CustomerID = 101
+Address = Chennai
+
+Customer changes address to Bangalore.
+
+After Type 1:
+CustomerID = 101
+Address = Bangalore
+
+The old Chennai value is gone.
+
+This is effectively a FULL REFRESH Type 1 implementation.
+
+CUSTOMER DIMENSION COLUMNS:
+CustomerID
+FirstName
+LastName
+Email
+PhoneNumber
+Address
+DateOfBirth
+BranchID
+effective_date
+
+ONE-LINE SUMMARY:
+Customer dimension uses SCD Type 1, so only the latest customer information is retained and previous values are not preserved.
+
+
+12. SCD TYPE 2 - BRANCHES
+
+SCD Type 2 means historical changes ARE maintained.
+
+Example:
+
+Day 1:
+BranchID = 10
+BranchName = Chennai Branch
+City = Chennai
+is_current = 1
+
+Later branch changes city.
+
+Old record:
+BranchID = 10
+City = Chennai
+end_date = 2026-09-02
+is_current = 0
+
+New record:
+BranchID = 10
+City = Bangalore
+start_date = 2026-09-03
+end_date = NULL
+is_current = 1
+
+History is preserved.
+
+
+13. SCD TYPE 2 UPDATE
+
+SQL:
+UPDATE edwdb_chandb.dim_branches d
+JOIN odsdb_chandb.ods_branches o
+  ON d.BranchID = o.BranchID
+SET d.end_date = CURRENT_DATE - INTERVAL 1 DAY,
+    d.is_current = 0
+WHERE d.is_current = 1
+  AND d.BranchID IS NOT NULL
+  AND (d.Address <> o.Address
+    OR d.BranchName <> o.BranchName
+    OR d.City <> o.City
+    OR d.State <> o.State
+    OR d.Zipcode <> o.Zipcode);
+
+The query finds the current branch using:
+d.is_current = 1
+
+It compares old EDW data against new ODS data.
+
+Compared columns:
+Address
+BranchName
+City
+State
+Zipcode
+
+If any value changed:
+old record -> expired
+
+It sets:
+is_current = 0
+end_date = yesterday
+
+Why yesterday?
+
+If today is 2026-09-03:
+CURRENT_DATE - INTERVAL 1 DAY = 2026-09-02
+
+So the old record is valid until yesterday.
+
+
+14. SCD TYPE 2 INSERT
+
+SQL:
+INSERT INTO edwdb_chandb.dim_branches (
+    Address,
+    BranchID,
+    BranchName,
+    City,
+    State,
+    Zipcode,
+    start_date,
+    end_date,
+    is_current
+)
+SELECT
+    o.Address,
+    o.BranchID,
+    o.BranchName,
+    o.City,
+    o.State,
+    o.Zipcode,
+    CURRENT_DATE,
+    NULL,
+    1
+FROM odsdb_chandb.ods_branches o
+LEFT JOIN edwdb_chandb.dim_branches d
+       ON o.BranchID = d.BranchID
+      AND d.is_current = 1
+WHERE d.BranchID IS NULL
+   OR d.Address <> o.Address
+   OR d.BranchName <> o.BranchName
+   OR d.City <> o.City
+   OR d.State <> o.State
+   OR d.Zipcode <> o.Zipcode;
+
+This handles:
+1. New branch
+2. Existing branch with changed attributes
+
+New/current record gets:
+start_date = CURRENT_DATE
+end_date = NULL
+is_current = 1
+
+SCD TYPE 2 COLUMNS:
+BranchID
+BranchName
+Address
+City
+State
+Zipcode
+start_date
+end_date
+is_current
+
+ONE-LINE SUMMARY:
+Branch dimension uses SCD Type 2 by expiring changed records and inserting a new current version while preserving historical records.
+
+
+15. EMPLOYEE DIMENSION
+
+SQL:
+INSERT INTO edwdb_chandb.dim_employees (
+    BranchID,
+    EmployeeID,
+    FirstName,
+    Hiredate,
+    LastName,
+    ManagerID,
+    Position
+)
+SELECT
+    BranchID,
+    EmployeeID,
+    FirstName,
+    Hiredate,
+    LastName,
+    ManagerID,
+    Position
+FROM odsdb_chandb.ods_employees;
+
+FLOW:
+ods_employees -> dim_employees
+
+COLUMNS:
+BranchID
+EmployeeID
+FirstName
+Hiredate
+LastName
+ManagerID
+Position
+
+No SCD logic is implemented here.
+
+
+16. LOAN DIMENSION
+
+SQL:
+INSERT INTO edwdb_chandb.dim_loans (
+    Amount,
+    Collateral,
+    CustomerID,
+    EndDate,
+    InterestRate,
+    LoanID,
+    LoanType,
+    PaymentFrequency,
+    StartDate,
+    Status
+)
+SELECT
+    Amount,
+    Collateral,
+    CustomerID,
+    EndDate,
+    InterestRate,
+    LoanID,
+    LoanType,
+    PaymentFrequency,
+    StartDate,
+    Status
+FROM odsdb_chandb.ods_loans;
+
+FLOW:
+ods_loans -> dim_loans
+
+COLUMNS:
+Amount
+Collateral
+CustomerID
+EndDate
+InterestRate
+LoanID
+LoanType
+PaymentFrequency
+StartDate
+Status
+
+
+17. EDW FACT LOAN LOAD
+
+FLOW:
+ODS Loans
+   |
+   +-- Customer lookup
+   |
+   +-- Branch lookup
+           |
+           v
+       fact_loans
+
+SQL:
+INSERT INTO edwdb_chandb.fact_loans (
+    LoanID,
+    CustomerID,
+    BranchID,
+    Amount,
+    InterestRate,
+    StartDate,
+    EndDate,
+    PaymentFrequency,
+    Status,
+    OutstandingBalance,
+    LoanDurationMonths,
+    RiskIndicator,
+    HighValueFlag,
+    load_dt,
+    load_ts
+)
+SELECT DISTINCT
+    o.LoanID,
+    c.CustomerID,
+    b.BranchID,
+    o.Amount,
+    o.InterestRate,
+    o.StartDate,
+    o.EndDate,
+    o.PaymentFrequency,
+    o.Status,
+    o.Amount AS OutstandingBalance,
+    TIMESTAMPDIFF(MONTH, o.StartDate, o.EndDate) AS LoanDurationMonths,
+    CASE
+        WHEN o.InterestRate > 12 THEN 'HIGH'
+        WHEN o.InterestRate BETWEEN 8 AND 12 THEN 'MEDIUM'
+        ELSE 'LOW'
+    END AS RiskIndicator,
+    CASE
+        WHEN o.Amount >= 1000000 THEN 'Y'
+        ELSE 'N'
+    END AS HighValueFlag,
+    CURRENT_DATE,
+    CURRENT_TIMESTAMP
+FROM odsdb_chandb.ods_loans o
+LEFT JOIN edwdb_chandb.dim_customers c
+    ON o.CustomerID = c.CustomerID
+LEFT JOIN edwdb_chandb.dim_branches b
+    ON c.BranchID = b.BranchID
+   AND b.is_current = 1;
+
+Why joins?
+
+Loan contains CustomerID.
+
+Customer dimension gives Customer -> Branch relationship.
+
+Branch dimension gives branch information.
+
+Flow:
+Loan -> Customer -> Branch
+
+
+18. FACT LOANS - DIRECT AND DERIVED COLUMNS
+
+DIRECT:
+LoanID
+CustomerID
+BranchID
+Amount
+InterestRate
+StartDate
+EndDate
+PaymentFrequency
+Status
+
+DERIVED:
+OutstandingBalance
+LoanDurationMonths
+RiskIndicator
+HighValueFlag
+
+
+19. RISK INDICATOR
+
+SQL:
+CASE
+    WHEN InterestRate > 12 THEN 'HIGH'
+    WHEN InterestRate BETWEEN 8 AND 12 THEN 'MEDIUM'
+    ELSE 'LOW'
+END
+
+Examples:
+15% -> HIGH
+10% -> MEDIUM
+7% -> LOW
+
+ONE-LINE:
+Risk is derived from the loan interest rate.
+
+
+20. HIGH VALUE FLAG
+
+SQL:
+CASE
+    WHEN Amount >= 1000000 THEN 'Y'
+    ELSE 'N'
+END
+
+Meaning:
+Loan >= 10 lakh -> Y
+Loan < 10 lakh -> N
+
+Examples:
+₹15,00,000 -> Y
+₹8,00,000 -> N
+
+
+21. LOAN DURATION MONTHS
+
+SQL:
+TIMESTAMPDIFF(MONTH, o.StartDate, o.EndDate)
+
+Calculates the difference between start and end dates in months.
+
+Example:
+Start = 2025-01-01
+End = 2030-01-01
+Duration = 60 months
+
+
+22. OUTSTANDING BALANCE
+
+Current logic:
+o.Amount AS OutstandingBalance
+
+This means the original loan amount is currently being treated as the outstanding balance.
+
+Example:
+Original Loan = ₹10,00,000
+Paid = ₹3,00,000
+Actual Outstanding = ₹7,00,000
+
+But current query would show:
+OutstandingBalance = ₹10,00,000
+
+So this is a simplified business rule.
+
+In a real banking system, outstanding balance would normally be calculated using repayment/payment information.
+
+
+23. FACT LOAN SUMMARY
+
+FLOW:
+fact_loans
+   |
+   +-- GROUP BY BranchID
+   |
+   +-- GROUP BY RiskIndicator
+   |
+   v
+fact_loan_summary
+
+Metrics:
+
+LoanCount:
+COUNT(*)
+Number of loans.
+
+TotalLoanAmount:
+SUM(Amount)
+Total loan amount.
+
+AverageLoanAmount:
+AVG(Amount)
+Average loan amount.
+
+MaximumLoanAmount:
+MAX(Amount)
+Largest loan.
+
+MinimumLoanAmount:
+MIN(Amount)
+Smallest loan.
+
+
+24. HIGH-VALUE LOAN METRICS
+
+HighValueLoanCount:
+SUM(CASE WHEN HighValueFlag = 'Y' THEN 1 ELSE 0 END)
+
+Counts high-value loans.
+
+HighValueLoanAmount:
+SUM(CASE WHEN HighValueFlag = 'Y' THEN Amount ELSE 0 END)
+
+Calculates total amount of high-value loans.
+
+
+25. ACTIVE AND CLOSED LOANS
+
+ActiveLoanCount:
+SUM(CASE WHEN Status = 'ACTIVE' THEN 1 ELSE 0 END)
+
+ClosedLoanCount:
+SUM(CASE WHEN Status = 'CLOSED' THEN 1 ELSE 0 END)
+
+Management can see:
+Branch
+Risk
+Total loans
+Active loans
+Closed loans
+High-value loans
+Loan amounts
+Average interest
+Average duration
+
+
+26. DATA MART - HIGH VALUE LOANS
+
+FLOW:
+EDW fact_loans
+      |
+      | WHERE HighValueFlag = 'Y'
+      v
+loans_mart_chandb.fact_high_value_loans
+
+Only high-value loans are selected.
+
+SQL condition:
+WHERE HighValueFlag = 'Y'
+
+
+27. LOAN CATEGORY
+
+SQL:
+CASE
+    WHEN RiskIndicator = 'HIGH'
+        THEN 'HIGH_VALUE_HIGH_RISK'
+    WHEN RiskIndicator = 'MEDIUM'
+        THEN 'HIGH_VALUE_MEDIUM_RISK'
+    ELSE 'HIGH_VALUE_LOW_RISK'
+END AS LoanCategory
+
+Because only HighValueFlag = Y records are selected, categories are:
+HIGH_VALUE_HIGH_RISK
+HIGH_VALUE_MEDIUM_RISK
+HIGH_VALUE_LOW_RISK
+
+Example:
+Loan Amount = ₹25 lakh
+Interest = 15%
+HighValueFlag = Y
+Risk = HIGH
+LoanCategory = HIGH_VALUE_HIGH_RISK
+
+
+28. TRANSACTION FACT MART
+
+FLOW:
+ODS Transactions
+       |
+       v
+fact_transactions
+
+Derived field:
+transaction_flag
+
+SQL:
+CASE
+    WHEN Suspicious THEN 'FLAGGED'
+    ELSE 'NORMAL'
+END
+
+Suspicious = TRUE -> FLAGGED
+Suspicious = FALSE -> NORMAL
+
+Useful for fraud/suspicious transaction reporting.
+
+
+29. BRANCH TRANSACTION SUMMARY
+
+FLOW:
+Branches
+   |
+   v
+Customers
+   |
+   v
+Accounts
+   |
+   v
+Transactions
+
+Join path:
+dim_branches
+   -> BranchID
+dim_customers
+   -> CustomerID
+ods_accounts
+   -> AccountID
+fact_transactions
+
+Metrics:
+Total_Customers
+Total_Accounts
+Total_Balance
+Total_Transactions
+
+Example:
+Branch | Customers | Accounts | Balance | Transactions
+Chennai | 500 | 800 | 50 Cr | 20 Cr
+Bangalore | 400 | 650 | 40 Cr | 15 Cr
+
+This gives management a branch-level overview.
+
+
+30. PAYMENT FACT MART
+
+FLOW:
+ODS Payments
+      |
+      v
+fact_payments
+
+Derived column:
+AmountInBaseCurrency
+
+Formula:
+Amount * ExchangeRate
+
+Example:
+Amount = 100 USD
+ExchangeRate = 83
+100 * 83 = ₹8,300
+
+CAST(... AS DECIMAL(18,2)) makes the result suitable for financial amounts with two decimal places.
+
+
+31. CREDIT CARD FACT
+
+FLOW:
+ODS Credit Card
+       +
+Customer Dimension
+       |
+       v
+fact_creditcard
+
+Join:
+oc.customerid = dcu.customerid
+
+Customer dimension provides:
+FirstName
+PhoneNumber
+
+
+32. CREDIT CARD UTILIZATION PERCENTAGE
+
+Formula:
+(balance / creditlimit) * 100
+
+Example:
+Balance = ₹40,000
+Credit Limit = ₹1,00,000
+
+40,000 / 1,00,000 * 100 = 40%
+
+UtilizationPercent = 40%
+
+The query protects against division by zero:
+WHEN creditlimit IS NULL OR creditlimit = 0 THEN NULL
+
+
+33. COMPLETE CUSTOMER DATA FLOW
+
+stg_cust_profile
+        |
+        v
+ods_cust_profile
+        |
+        v
+dim_customers
+        |
+        +--> fact_loans
+        |
+        +--> creditcard mart
+
+
+34. COMPLETE BRANCH DATA FLOW
+
+stg_branches
+      |
+      v
+ods_branches
+      |
+      v
+dim_branches
+      |
+      +--> fact_loans
+      |
+      +--> fact_loan_summary
+      |
+      +--> agg_branch_trans_summary
+
+
+35. COMPLETE LOAN DATA FLOW
+
+stg_loans
+    |
+    v
+ods_loans
+    |
+    +--> dim_loans
+    |
+    v
+fact_loans
+    |
+    +--> fact_loan_summary
+    |
+    +--> fact_high_value_loans
+
+Important loan columns:
+LoanID
+CustomerID
+Amount
+InterestRate
+StartDate
+EndDate
+LoanType
+PaymentFrequency
+Status
+
+Derived in fact:
+OutstandingBalance
+LoanDurationMonths
+RiskIndicator
+HighValueFlag
+
+
+36. COMPLETE ACCOUNT DATA FLOW
+
+stg_accounts
+    |
+    v
+ods_accounts
+    |
+    v
+agg_branch_trans_summary
+
+Important columns:
+AccountID
+AccountType
+Balance
+CreditScore
+Currency
+CustomerID
+DateOpened
+ManagerID
+ODLimit
+
+
+37. COMPLETE TRANSACTION DATA FLOW
+
+stg_transactions
+      |
+      v
+ods_transactions
+      |
+      v
+fact_transactions
+      |
+      v
+agg_branch_trans_summary
+
+Derived:
+transaction_flag
+
+
+38. COMPLETE PAYMENT DATA FLOW
+
+stg_payments
+      |
+      v
+ods_payments
+      |
+      v
+fact_payments
+
+Derived:
+AmountInBaseCurrency
+
+
+39. COMPLETE CREDIT CARD DATA FLOW
+
+stg_creditcard
+      |
+      v
+ods_creditcard
+      |
+      v
+fact_creditcard
+
+Derived:
+utilization_percent
+
+
+40. CONCEPTS DEMONSTRATED IN THIS SQL PROJECT
+
+Concept | Where Used
+ETL | STG -> ODS -> EDW
+Data cleansing | TRIM, UPPER, SUBSTR
+Audit columns | load_dt, load_ts
+SCD Type 1 | dim_customers
+SCD Type 2 | dim_branches
+Historical tracking | start_date, end_date, is_current
+Dimension tables | dim_customers, dim_branches, dim_employees, dim_loans
+Fact tables | fact_loans, fact_transactions
+Derived columns | Risk, HighValue, Utilization, LoanCategory
+Aggregation | fact_loan_summary
+Conditional logic | CASE WHEN
+Joins | Customer -> Branch -> Loan
+Date calculation | TIMESTAMPDIFF
+Financial calculation | Amount * ExchangeRate
+Data Marts | Loan/Transaction/Payment/CC marts
+Star schema | Dimensions surrounding facts
+
+
+41. IMPORTANT ISSUES IN THE PROVIDED SCRIPT
+
+ISSUE 1 - DUPLICATED EDW SECTION
+
+The provided script contains the following section twice:
+SCD Type 1
+SCD Type 2
+Employee
+Loan
+Fact
+Summary
+
+If the complete script is executed twice, fact records and summary records can potentially be duplicated.
+
+Keep only one copy.
+
+ISSUE 2 - EXECUTION ORDER
+
+The logical execution order should be:
+
+1. STG
+   |
+2. ODS
+   |
+3. SCD Type 1 dimensions
+   |
+4. SCD Type 2 dimensions
+   |
+5. Other dimensions
+   |
+6. EDW facts
+   |
+7. EDW summaries
+   |
+8. Data marts
+
+ODS must be loaded before EDW.
+
+
+ISSUE 3 - SCHEMA NAME CONSISTENCY
+
+You have:
+FROM edwdb.fact_loans
+
+But elsewhere you use:
+edwdb_chandb.fact_loans
+
+If edwdb is not the intended schema, change it to:
+FROM edwdb_chandb.fact_loans
+
+Similarly, you have:
+FROM odsdb.ods_transactions
+
+while most of your ODS tables are:
+odsdb_chandb.ods_transactions
+
+Verify these schema names before execution.
+
+
+42. INTERVIEW-READY ONE-LINE EXPLANATION
+
+“I implemented a banking ETL pipeline where data flows from Staging to ODS for cleansing and audit tracking, then into an EDW using SCD Type 1 for customers and SCD Type 2 for branches, followed by fact and summary tables with business-derived metrics such as risk, high-value loans and loan duration, and finally into subject-specific data marts for loans, transactions, payments and credit cards.”
+
+FINAL ARCHITECTURE:
+
+                    +---------------------+
+                    |       STAGING       |
+                    |     chandb.stg_*    |
+                    +----------+----------+
+                               |
+                               v
+                    +---------------------+
+                    |         ODS         |
+                    |   odsdb_chandb.*    |
+                    +----------+----------+
+                               |
+              +----------------+----------------+
+              |                |                |
+              v                v                v
+       +------------+   +-------------+   +-------------+
+       | DIMENSIONS |   |    FACTS    |   |   LOOKUPS   |
+       |            |   |             |   |             |
+       | Customers  |   | fact_loans  |   | Customer    |
+       | Branches   |   |             |   | Branch      |
+       | Employees  |   |             |   |             |
+       | Loans      |   |             |   |             |
+       +------+-----+   +------+------+
+              |                |
+              +--------+-------+
+                       v
+              +-----------------+
+              |   DATA MARTS    |
+              +-----------------+
+              | Loans Mart      |
+              | Transaction Mart|
+              | Payment Mart    |
+              | Credit Card Mart|
+              +--------+--------+
+                       |
+                       v
+                 BI / REPORTING
+
+
+FINAL ONE-LINE SUMMARY:
+
+STG -> ODS -> EDW -> DATA MART -> BI/REPORTING
+
+Raw data -> Cleaned data -> Historical dimensions + analytical facts -> Business-specific reporting -> Analytics.

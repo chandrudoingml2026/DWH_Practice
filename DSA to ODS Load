@@ -1,0 +1,61 @@
+INSERT INTO odsdb_chandb_chandb.ods_accounts
+SELECT AccountID,trim(AccountType),Balance,CreditScore,upper(Currency),CustomerID,DateOpened,ManagerID,ODLimit,
+CURRENT_DATE AS load_dt, CURRENT_TIMESTAMP AS load_ts
+FROM chandb.stg_accounts where AccountID is not null; 
+
+# ODS loads from staging with exact copy
+# ODS Load from Staging with load_dt and load_ts
+
+INSERT INTO odsdb_chandb.ods_accounts
+SELECT AccountID,trim(AccountType),Balance,CreditScore,upper(Currency),CustomerID,DateOpened,ManagerID,ODLimit,
+CURRENT_DATE AS load_dt, CURRENT_TIMESTAMP AS load_ts
+FROM chandb.stg_accounts where AccountID is not null; 
+       
+INSERT INTO odsdb_chandb.ods_transactions
+SELECT t.*, 
+       CURRENT_DATE AS load_dt, 
+       CURRENT_TIMESTAMP AS load_ts
+FROM chandb.stg_transactions t;
+
+INSERT INTO odsdb_chandb.ods_payments
+SELECT p.*, 
+       CURRENT_DATE AS load_dt, 
+       CURRENT_TIMESTAMP AS load_ts
+FROM chandb.stg_payments p;
+
+INSERT INTO odsdb_chandb.ods_creditcard
+SELECT c.*, 
+       CURRENT_DATE AS load_dt, 
+       CURRENT_TIMESTAMP AS load_ts
+FROM chandb.stg_creditcard c;
+
+INSERT INTO odsdb_chandb.ods_loans
+SELECT l.*, 
+       CURRENT_DATE AS load_dt, 
+       CURRENT_TIMESTAMP AS load_ts
+FROM chandb.stg_loans l;
+
+INSERT INTO odsdb_chandb.ods_cust_profile
+SELECT Address,
+    BranchID,
+    CustomerID,
+    DateOfBirth,
+    Email,
+    trim(FirstName),
+    trim(LastName),
+    substr(PhoneNumber,1,20), 
+    CURRENT_DATE AS load_dt, 
+    CURRENT_TIMESTAMP AS load_ts
+FROM chandb.stg_cust_profile cp;
+
+INSERT INTO odsdb_chandb.ods_branches
+SELECT b.*, 
+       CURRENT_DATE AS load_dt, 
+       CURRENT_TIMESTAMP AS load_ts
+FROM chandb.stg_branches b;
+
+INSERT INTO odsdb_chandb.ods_employees
+SELECT e.*, 
+       CURRENT_DATE AS load_dt, 
+       CURRENT_TIMESTAMP AS load_ts
+FROM chandb.stg_employees e;

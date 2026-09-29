@@ -1,0 +1,52 @@
+                    ODS
+                     |
+       +-------------+-------------+
+       |             |             |
+       ↓             ↓             ↓
+customers        branches        loans
+       |             |             |
+       ↓             ↓             ↓
+dim_customers   dim_branches   dim_loans
+       |             |
+       +------+------+
+              |
+              ↓
+         fact_loans
+              |
+              ↓
+      fact_loan_summary
+
+Our EDW primarily follows a Star Schema. The central fact table is fact_loans, and 
+it is surrounded by dimensions such as dim_customers, dim_branches, dim_employees, 
+and dim_loans. The source data first comes into the ODS layer. Customer data is loaded using SCD Type 1, 
+where historical changes are not maintained. Branch data uses SCD Type 2, 
+where we maintain historical versions using start_date, end_date, and is_current.
+
+The loan data from ods_loans is combined with customer and branch dimensions
+to populate fact_loans. During the fact load, we calculate measures and derived attributes 
+such as loan duration, risk indicator, and high-value flag. Finally, fact_loan_summary
+is populated from fact_loans by aggregating loan metrics based on branch and risk category.
+Since the EDW contains multiple fact tables sharing dimensions, it can also be considered
+a Fact Constellation or Galaxy Schema."
+
+| Concept                 | Your Project                                                  | Meaning                                                           |
+| ----------------------- | ------------------------------------------------------------- | ----------------------------------------------------------------- |
+| ⭐ **Star Schema**       | **YES – Primary design**                                      | Fact table surrounded by dimensions                               |
+| ❄️ **Snowflake Schema** | **NO – Not primary**                                          | Dimensions are normalized into additional tables                  |
+| 🌌 **Galaxy Schema**    | **YES – Aspect**                                              | Multiple fact tables such as `fact_loans` and `fact_loan_summary` |
+| **SCD Type 1**          | **YES**                                                       | `dim_customers`; history not maintained                           |
+| **SCD Type 2**          | **YES**                                                       | `dim_branches`; history maintained                                |
+| **ODS → EDW**           | **YES**                                                       | ODS tables feed dimensions/facts                                  |
+| **Fact Tables**         | `fact_loans`, `fact_loan_summary`                             | Measures/business events                                          |
+| **Dimension Tables**    | `dim_customers`, `dim_branches`, `dim_employees`, `dim_loans` | Descriptive information                                           |
+| **Main fact source**    | `odsdb.ods_loans`                                             | Loan-level source                                                 |
+| **Summary source**      | `fact_loans`                                                  | Aggregated from fact data                                         |
+
+
+Difference Between fact_loans and fact_loan_summary
+fact_loans	fact_loan_summary
+Detailed data	Aggregated data
+Loan-level	Branch + Risk level
+Source is ODS loans + dimensions	Source is fact_loans
+One row represents a loan	One row represents an aggregation
+Used for detailed analysis	Used for summary reporting
